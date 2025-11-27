@@ -33,6 +33,7 @@ async function callOpenAI(model, temperature, systemMsg, userJson) {
     response_format: { type: 'json_object' }
   };
 
+  // gpt-5 계열은 temperature 고정이라면 건드리지 않음
   if (!/^gpt-5(?:-|$)/.test(model) && typeof temperature === 'number') {
     payload.temperature = temperature;
   }
@@ -78,25 +79,28 @@ function normalizeDa(t) {
   return s;
 }
 
-// ======== 프롬프트 (GAS에서 쓰던 것 그대로) ========
+// ======== 프롬프트 (조금 다이어트 + 2문장 고정 설명 추가) ========
 
 const PROMPTS = {
   classifySuggest: {
     system: `
 입력된 일기 텍스트를 ACT(수용전념치료) 관점으로 4영역으로 제안한다.
-각 영역별 2~3개의 짧은 문장을 제안한다.
+각 영역별 정확히 2개의 짧은 문장을 제안한다.
 
 규칙:
 - 같은 의미나 감정의 중복 문장은 제거한다.
 - 감정은 현재의 느낌을, 생각은 해석/평가를, 행동은 회피·수용·접근 중 하나로 표현한다.
 - 불분명하면 "구름이가 이 부분은 도와줄 수 없어요."로 남긴다.
+- 행동 문장 안에는 '접근', '수용', '회피'라는 단어를 쓰지 말고, 단순히 '~했다.' 형식의 행동만 자연스럽게 쓴다.
+- confidence, tags 같은 값은 만들지 말고, text만 포함한다.
+
 
 반환(JSON 하나):
 {
-  "situation": { "cards": [ { "text": "" }, ... ] },
-  "feeling":   { "cards": [ { "text": "" }, ... ] },
-  "thought":   { "cards": [ { "text": "" }, ... ] },
-  "behavior":  { "cards": [ { "text": "" }, ... ] }
+  "situation": { "cards": [ { "text": "" }, { "text": "" } ] },
+  "feeling":   { "cards": [ { "text": "" }, { "text": "" } ] },
+  "thought":   { "cards": [ { "text": "" }, { "text": "" } ] },
+  "behavior":  { "cards": [ { "text": "" }, { "text": "" } ] }
 }
     `.trim()
   },
@@ -137,9 +141,11 @@ const PROMPTS = {
 
 app.post('/classifysuggest', async (req, res) => {
   try {
-    let { text = '', lang = 'ko', top_k = 3 } = req.body || {};
+    let { text = '', lang = 'ko' } = req.body || {};
     text = String(text || '').slice(0, 3000);
-    top_k = Math.max(1, Math.min(3, parseInt(top_k || 2, 10)));
+
+    // 각 영역당 2문장 고정
+    const TOP_K = 2;
 
     if (!text) {
       return res.status(400).json({ ok:false, error:'empty_text' });
@@ -149,18 +155,15 @@ app.post('/classifysuggest', async (req, res) => {
       'gpt-5-nano',
       0.2,
       PROMPTS.classifySuggest.system,
-      { text, lang, top_k }
+      { text, lang, top_k: TOP_K }
     );
 
     function clean(arr) {
       return (Array.isArray(arr) ? arr : [])
-        .slice(0, top_k)
+        .slice(0, TOP_K)
         .map(c => ({
-          text: normalizeDa(c && c.text || ''),
-          confidence: Math.max(
-            0.5,
-            Math.min(0.95, Number(c && c.confidence || 0.62))
-          )
+          // 🔹 text만 남기고 나머지는 버림
+          text: normalizeDa(c && c.text || '')
         }))
         .filter(c => c.text);
     }
