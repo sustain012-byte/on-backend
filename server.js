@@ -33,8 +33,8 @@ async function callOpenAI(model, temperature, systemMsg, userJson) {
     response_format: { type: 'json_object' }
   };
 
-  // 🔧 모든 모델에 공통으로 temperature 적용
-  if (typeof temperature === 'number') {
+  // ✅ gpt-5 계열은 temperature 필드를 아예 안 보냄
+  if (!/^gpt-5(?:\.1|-mini|$)/.test(model) && typeof temperature === 'number') {
     payload.temperature = temperature;
   }
 
@@ -162,7 +162,7 @@ app.post('/classifysuggest', async (req, res) => {
     const out = await callOpenAI(
       // 🔄 여기서 gpt-5-mini 사용
       'gpt-5-mini',
-      0.2,
+      null,
       PROMPTS.classifySuggest.system,
       { text, lang, top_k: TOP_K }
     );
