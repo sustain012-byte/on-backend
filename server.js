@@ -33,10 +33,10 @@ async function callOpenAI(model, temperature, systemMsg, userJson) {
     response_format: { type: 'json_object' }
   };
 
- // gpt-5 계열은 temperature 고정이라면 건드리지 않음
-if (!/^gpt-5(?:-|$)/.test(model) && typeof temperature === 'number') {
-  payload.temperature = temperature;
-}
+  // gpt-5 계열은 temperature 고정이라면 건드리지 않음
+  if (!/^gpt-5(?:-|$)/.test(model) && typeof temperature === 'number') {
+    payload.temperature = temperature;
+  }
 
   const t0 = Date.now();
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -112,7 +112,6 @@ const PROMPTS = {
 }
     `.trim()
   },
-};
 
   practice: {
     system: `
@@ -153,7 +152,7 @@ app.post('/classifysuggest', async (req, res) => {
     let { text = '', lang = 'ko' } = req.body || {};
     text = String(text || '').slice(0, 3000);
 
-    // 각 영역당 2문장 고정
+    // 각 영역당 3문장 고정
     const TOP_K = 3;
 
     if (!text) {
@@ -161,7 +160,7 @@ app.post('/classifysuggest', async (req, res) => {
     }
 
     const out = await callOpenAI(
-      'gpt-4.1-mini',              // 🔹 여기서 nano → 4.1-turbo
+      'gpt-4.1-mini',
       0.2,
       PROMPTS.classifySuggest.system,
       { text, lang, top_k: TOP_K }
@@ -171,7 +170,7 @@ app.post('/classifysuggest', async (req, res) => {
       return (Array.isArray(arr) ? arr : [])
         .slice(0, TOP_K)
         .map(c => ({
-          // 🔹 text만 남기고 나머지는 버림
+          // text만 남기고 나머지는 버림
           text: normalizeDa(c && c.text || '')
         }))
         .filter(c => c.text);
@@ -207,7 +206,7 @@ app.post('/practice', async (req, res) => {
     }
 
     const out = await callOpenAI(
-      'gpt-5',           // 🔹 여기 practice는 그대로 gpt-5 유지 (원하면 나중에 4.1-turbo로도 바꿀 수 있음)
+      'gpt-5',
       0.2,
       PROMPTS.practice.system,
       { text, lang }
