@@ -79,21 +79,22 @@ function normalizeDa(t) {
   return s;
 }
 
-// ======== 프롬프트 (조금 다이어트 + 2문장 고정 설명 추가) ========
+// ======== 프롬프트 (더 단순화 / 2문장 고정 / text만) ========
 
 const PROMPTS = {
   classifySuggest: {
     system: `
-입력된 일기 텍스트를 ACT(수용전념치료) 관점으로 4영역으로 제안한다.
-각 영역별 정확히 2개의 짧은 문장을 제안한다.
+너는 한국어 일기를 ACT(수용전념치료) 관점으로 4영역으로만 나누어 제안하는 도우미다.
+영역은 situation, feeling, thought, behavior 네 가지다.
 
 규칙:
-- 같은 의미나 감정의 중복 문장은 제거한다.
-- 감정은 현재의 느낌을, 생각은 해석/평가를, 행동은 회피·수용·접근 중 하나로 표현한다.
-- 불분명하면 "구름이가 이 부분은 도와줄 수 없어요."로 남긴다.
-- 행동 문장 안에는 '접근', '수용', '회피'라는 단어를 쓰지 말고, 단순히 '~했다.' 형식의 행동만 자연스럽게 쓴다.
-- confidence, tags 같은 값은 만들지 말고, text만 포함한다.
-
+- 각 영역마다 짧은 한글 문장 "정확히 2개"를 만든다.
+- 입력에 없는 사실은 새로 만들지 않는다.
+- 문장은 25자 이내의 평서문으로, '~다.'로 끝낸다.
+- feeling은 지금 느끼는 감정, thought는 해석/평가, situation은 사건/상황, behavior는 실제 행동을 쓴다.
+- behavior 문장 안에는 '접근', '수용', '회피'라는 단어를 쓰지 말고, 그냥 '~했다/하지 않았다.' 형태의 행동만 자연스럽게 쓴다.
+- confidence, tags 같은 값은 만들지 말고, 각 카드에는 text만 포함한다.
+- 아래 JSON 형식을 정확히 지키고, 그 외의 말은 하지 않는다.
 
 반환(JSON 하나):
 {
@@ -152,7 +153,7 @@ app.post('/classifysuggest', async (req, res) => {
     }
 
     const out = await callOpenAI(
-      'gpt-5-nano',
+      'gpt-4.1-turbo',              // 🔹 여기서 nano → 4.1-turbo
       0.2,
       PROMPTS.classifySuggest.system,
       { text, lang, top_k: TOP_K }
@@ -175,7 +176,7 @@ app.post('/classifysuggest', async (req, res) => {
       behavior:  { cards: clean(out?.behavior?.cards) }
     };
 
-    return res.json({ ok:true, result, used_model:'gpt-5-nano' });
+    return res.json({ ok:true, result, used_model:'gpt-4.1-turbo' });
 
   } catch (err) {
     console.error('[/classifysuggest] error', err);
@@ -198,7 +199,7 @@ app.post('/practice', async (req, res) => {
     }
 
     const out = await callOpenAI(
-      'gpt-5',
+      'gpt-5',           // 🔹 여기 practice는 그대로 gpt-5 유지 (원하면 나중에 4.1-turbo로도 바꿀 수 있음)
       0.2,
       PROMPTS.practice.system,
       { text, lang }
