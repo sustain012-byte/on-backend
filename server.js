@@ -33,8 +33,8 @@ async function callOpenAI(model, temperature, systemMsg, userJson) {
     response_format: { type: 'json_object' }
   };
 
-  // gpt-5 계열은 temperature 고정이라면 건드리지 않음
-  if (!/^gpt-5(?:-|$)/.test(model) && typeof temperature === 'number') {
+  // 🔧 모든 모델에 공통으로 temperature 적용
+  if (typeof temperature === 'number') {
     payload.temperature = temperature;
   }
 
@@ -129,7 +129,7 @@ const PROMPTS = {
 - 명령형, 질문형, 조언형, “~해야 한다”는 표현 금지.
 - 모든 문장은 따뜻한 자기진술문으로, ‘~다.’로 끝난다.
 - 1문장 30~40자 이내, 총 7문장.
-- 고유명사는 OO으로 치환.
+- 각 카드에는 text만 포함하고, confidence, tags 같은 값은 만들지 않는다.
 - JSON 하나만 출력.
 
 형식:
@@ -160,7 +160,8 @@ app.post('/classifysuggest', async (req, res) => {
     }
 
     const out = await callOpenAI(
-      'gpt-4.1-mini',
+      // 🔄 여기서 gpt-5-mini 사용
+      'gpt-5-mini',
       0.2,
       PROMPTS.classifySuggest.system,
       { text, lang, top_k: TOP_K }
@@ -183,7 +184,7 @@ app.post('/classifysuggest', async (req, res) => {
       behavior:  { cards: clean(out?.behavior?.cards) }
     };
 
-    return res.json({ ok:true, result, used_model:'gpt-4.1-mini' });
+    return res.json({ ok:true, result, used_model:'gpt-5-mini' });
 
   } catch (err) {
     console.error('[/classifysuggest] error', err);
@@ -206,7 +207,8 @@ app.post('/practice', async (req, res) => {
     }
 
     const out = await callOpenAI(
-      'gpt-5',
+      // 🔄 여기서 gpt-5.1 사용 (고품질 ACT 문장)
+      'gpt-5.1',
       0.2,
       PROMPTS.practice.system,
       { text, lang }
@@ -232,7 +234,11 @@ app.post('/practice', async (req, res) => {
       arr.push({ text: normalizeDa('나는 지금의 나를 있는 그대로 둔다') });
     }
 
-    return res.json({ ok:true, practice_sets_json: arr, used_model:'gpt-5' });
+    return res.json({
+      ok:true,
+      practice_sets_json: arr,
+      used_model:'gpt-5.1'
+    });
 
   } catch (err) {
     console.error('[/practice] error', err);
