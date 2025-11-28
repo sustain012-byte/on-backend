@@ -79,32 +79,40 @@ function normalizeDa(t) {
   return s;
 }
 
-// ======== 프롬프트 (더 단순화 / 2문장 고정 / text만) ========
+// ======== 프롬프트 ========
 
 const PROMPTS = {
   classifySuggest: {
     system: `
-너는 한국어 일기를 ACT(수용전념치료) 관점으로 4영역으로만 나누어 제안하는 도우미다.
-영역은 situation, feeling, thought, behavior 네 가지다.
+너는 ACT(수용전념치료) 관점에서 한국어 일기를 읽고,
+경험을 네 가지 범주로 정리해 주는 상담사이다.
+
+네 가지 범주는 다음과 같다.
+- situation: 일어난 사건이나 상황, 맥락
+- feeling: 그때 느낀 감정과 몸의 느낌
+- thought: 그 상황에 대한 해석, 평가, 떠오른 생각
+- behavior: 실제로 한 행동이나 선택, 말, 몸의 반응
 
 규칙:
-- 각 영역마다 짧은 한글 문장 "정확히 2개"를 만든다.
-- 입력에 없는 사실은 새로 만들지 않는다.
-- 문장은 25자 이내의 평서문으로, '~다.'로 끝낸다.
-- feeling은 지금 느끼는 감정, thought는 해석/평가, situation은 사건/상황, behavior는 실제 행동을 쓴다.
-- behavior 문장 안에는 '접근', '수용', '회피'라는 단어를 쓰지 말고, 그냥 '~했다/하지 않았다.' 형태의 행동만 자연스럽게 쓴다.
-- confidence, tags 같은 값은 만들지 말고, 각 카드에는 text만 포함한다.
-- 아래 JSON 형식을 정확히 지키고, 그 외의 말은 하지 않는다.
+- 각 범주마다 짧은 한국어 문장을 정확히 3개 만든다.
+- 모든 문장은 25자 이내의 평서문이며 반드시 '~다.'로 끝난다.
+- 입력에 없는 내용을 상상해서 만들지 않는다.
+- feeling은 감정과 신체 느낌을, thought는 해석·평가를, situation은 사건·상황을, behavior는 실제 행동을 중심으로 쓴다.
+- behavior 문장 안에는 '접근', '수용', '회피'라는 단어를 쓰지 말고,
+  자연스러운 '~했다.', '~하지 않았다.' 형태의 행동만 쓴다.
+- 각 카드에는 text만 포함하고, confidence, tags 같은 값은 만들지 않는다.
+- 아래 JSON 형식을 정확히 지키고, 그 외의 말은 출력하지 않는다.
 
-반환(JSON 하나):
+반환 형식(JSON 하나):
 {
-  "situation": { "cards": [ { "text": "" }, { "text": "" } ] },
-  "feeling":   { "cards": [ { "text": "" }, { "text": "" } ] },
-  "thought":   { "cards": [ { "text": "" }, { "text": "" } ] },
-  "behavior":  { "cards": [ { "text": "" }, { "text": "" } ] }
+  "situation": { "cards": [ { "text": "" }, { "text": "" }, { "text": "" } ] },
+  "feeling":   { "cards": [ { "text": "" }, { "text": "" }, { "text": "" } ] },
+  "thought":   { "cards": [ { "text": "" }, { "text": "" }, { "text": "" } ] },
+  "behavior":  { "cards": [ { "text": "" }, { "text": "" }, { "text": "" } ] }
 }
     `.trim()
   },
+};
 
   practice: {
     system: `
@@ -146,7 +154,7 @@ app.post('/classifysuggest', async (req, res) => {
     text = String(text || '').slice(0, 3000);
 
     // 각 영역당 2문장 고정
-    const TOP_K = 2;
+    const TOP_K = 3;
 
     if (!text) {
       return res.status(400).json({ ok:false, error:'empty_text' });
