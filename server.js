@@ -33,10 +33,10 @@ async function callOpenAI(model, temperature, systemMsg, userJson) {
     response_format: { type: 'json_object' }
   };
 
-  // gpt-5 계열은 temperature 고정이라면 건드리지 않음
-  if (!/^gpt-5(?:-|$)/.test(model) && typeof temperature === 'number') {
-    payload.temperature = temperature;
-  }
+ // gpt-5 계열은 temperature 고정이라면 건드리지 않음
+if (!/^gpt-5(?:-|$)/.test(model) && typeof temperature === 'number') {
+  payload.temperature = temperature;
+}
 
   const t0 = Date.now();
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -153,7 +153,7 @@ app.post('/classifysuggest', async (req, res) => {
     }
 
     const out = await callOpenAI(
-      'gpt-4.1-turbo',              // 🔹 여기서 nano → 4.1-turbo
+      'gpt-4.1-mini',              // 🔹 여기서 nano → 4.1-turbo
       0.2,
       PROMPTS.classifySuggest.system,
       { text, lang, top_k: TOP_K }
@@ -176,7 +176,7 @@ app.post('/classifysuggest', async (req, res) => {
       behavior:  { cards: clean(out?.behavior?.cards) }
     };
 
-    return res.json({ ok:true, result, used_model:'gpt-4.1-turbo' });
+    return res.json({ ok:true, result, used_model:'gpt-4.1-mini' });
 
   } catch (err) {
     console.error('[/classifysuggest] error', err);
