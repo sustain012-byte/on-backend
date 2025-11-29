@@ -161,7 +161,7 @@ app.post('/classifysuggest', async (req, res) => {
 
     const out = await callOpenAI(
       // 🔄 여기서 gpt-5-mini 사용
-      'gpt-5-mini',
+      'gpt-4.1-mini',
       null,
       PROMPTS.classifySuggest.system,
       { text, lang, top_k: TOP_K }
@@ -184,7 +184,7 @@ app.post('/classifysuggest', async (req, res) => {
       behavior:  { cards: clean(out?.behavior?.cards) }
     };
 
-    return res.json({ ok:true, result, used_model:'gpt-5-mini' });
+    return res.json({ ok:true, result, used_model:'gpt-4.1-mini' });
 
   } catch (err) {
     console.error('[/classifysuggest] error', err);
