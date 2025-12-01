@@ -13,8 +13,31 @@ if (!OPENAI_API_KEY) {
   console.warn('⚠️ OPENAI_API_KEY 환경변수가 설정되지 않았습니다.');
 }
 
-// 공통 미들웨어
-app.use(cors());                  // 개발 편하게 전체 origin 허용
+/* ================= CORS 설정 ================= */
+
+// ✅ 브라우저 프리플라이트(OPTIONS)를 확실하게 처리하기 위한 옵션
+const corsOptions = {
+  origin: '*',                             // 필요하면 나중에 도메인으로 좁히기
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type'],
+};
+
+// 모든 요청에 CORS 헤더 붙이기
+app.use(cors(corsOptions));
+
+// 프리플라이트(OPTIONS) 요청 미리 핸들링
+app.options('*', cors(corsOptions));
+// 필요하면 개별 라우트만 따로 열 수도 있음(중복 무해)
+// app.options('/classifysuggest', cors(corsOptions));
+// app.options('/practice', cors(corsOptions));
+
+/* (선택) 디버깅용 요청 로그 — 나중에 시끄러우면 지워도 됨 */
+app.use((req, res, next) => {
+  console.log(`[REQ] ${req.method} ${req.path}`);
+  next();
+});
+
+// JSON 바디 파서
 app.use(express.json({ limit: '1mb' }));
 
 // ======== OpenAI 호출 유틸 ========
