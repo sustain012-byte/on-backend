@@ -9,10 +9,28 @@ const app = express();
 
 // ================== 환경변수 ==================
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY; // Google AI Studio 키
 
-if (!OPENAI_API_KEY) console.warn('⚠️ OPENAI_API_KEY 없음');
-if (!GEMINI_API_KEY) console.warn('⚠️ GEMINI_API_KEY 없음');
+// Gemini 키는 이름이 헷갈릴 수 있어서 후보 몇 개를 다 확인한다
+const GEMINI_API_KEY =
+  process.env.GEMINI_API_KEY ||   // 우리가 지금 쓰려는 이름
+  process.env.Gemini_API ||       // 혹시 이렇게 만들어 둔 경우
+  process.env.gemini_api ||       // 전부 소문자로 만든 경우
+  '';                             // 아무 것도 없으면 빈 문자열
+
+// 디버깅: 실제로 process.env에 어떤 'gemini' 관련 키가 있는지 출력
+const geminiEnvKeys = Object.keys(process.env).filter(k =>
+  k.toLowerCase().includes('gemini')
+);
+console.log('[ENV] GEMINI 관련 키들:', geminiEnvKeys);
+
+if (!OPENAI_API_KEY) {
+  console.warn('⚠️ OPENAI_API_KEY 없음');
+}
+if (!GEMINI_API_KEY) {
+  console.warn('⚠️ GEMINI_API_KEY 없음 — TTS는 텍스트만 동작');
+} else {
+  console.log('✅ GEMINI_API_KEY 감지:', GEMINI_API_KEY.slice(0, 8) + '...');
+}
 
 // ======================================================
 // CORS 설정
