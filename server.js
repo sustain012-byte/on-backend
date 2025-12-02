@@ -121,11 +121,11 @@ async function synthesizeLinesWithGeminiTTS(lines = []) {
     return lines.map(() => null);
   }
 
-// --- Gemini TTS API 호출 부분 ---
-const MODEL_ID = "gemini-2.5-flash-preview-tts";
-const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_ID}:streamGenerateContent?key=${encodeURIComponent(
-  GEMINI_API_KEY,
-)}`;
+  // ✅ streamGenerateContent 말고, 일반 generateContent 사용
+  const MODEL_ID = "gemini-2.5-flash-preview-tts";
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_ID}:generateContent?key=${encodeURIComponent(
+    GEMINI_API_KEY,
+  )}`;
 
   const results = [];
 
@@ -142,9 +142,8 @@ const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_ID}
           parts: [{ text }],
         },
       ],
-      // AI Studio의 "Get code"에서 준 형식 그대로 사용 (소문자 audio)
       generationConfig: {
-        responseModalities: ['audio'],
+        responseModalities: ['audio'],  // 소문자 audio
         temperature: 1,
         speech_config: {
           voice_config: {
@@ -177,18 +176,25 @@ const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_ID}
 
       const data = await res.json();
 
-      // candidates[0].content.parts[*].inline_data.data 또는 audio.data 중 하나에 들어옴
-            // candidates[0].content.parts[*].inlineData.data 에 오디오(Base64)가 들어온다
-      const parts = data?.candidates?.[0]?.content?.parts || [];
+      // ✅ 1) 응답이 배열일 수도 있고, 객체일 수도 있음 → 통합 처리
+      let payload = data;
+      if (Array.isArray(payload)) {
+        // candidates가 있는 첫 번째 청크를 사용
+        payload =
+          payload.find(ch => ch?.candidates?.[0]?.content?.parts?.length) ||
+          payload[0];
+      }
+
+      // ✅ 2) inlineData (camelCase) 안에 base64 오디오 들어 있음
+      const parts = payload?.candidates?.[0]?.content?.parts || [];
       let base64audio = null;
 
       for (const p of parts) {
-        // 1) AI Studio REST 예제: inlineData (camelCase)
         if (p.inlineData && p.inlineData.data) {
           base64audio = p.inlineData.data;
           break;
         }
-        // 2) 혹시 다른 형식을 쓸 수도 있으니까 예비로 둘 것들
+        // 혹시 다른 포맷으로 올 가능성까지 대비
         if (p.inline_data && p.inline_data.data) {
           base64audio = p.inline_data.data;
           break;
@@ -202,7 +208,7 @@ const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_ID}
       if (!base64audio) {
         console.warn(
           '[GEMINI_TTS] 오디오 데이터를 찾지 못했습니다.',
-          JSON.stringify(data).slice(0, 200) + '...',
+          JSON.stringify(payload).slice(0, 200) + '...',
         );
       }
 
