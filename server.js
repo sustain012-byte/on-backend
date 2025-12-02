@@ -121,7 +121,7 @@ async function synthesizeLinesWithGeminiTTS(lines = []) {
     return lines.map(() => null);
   }
 
-  const MODEL_ID = 'gemini-2.5-pro-preview-tts';
+  const MODEL_ID = "gemini-2.5-flash-tts";
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_ID}:generateContent?key=${encodeURIComponent(
     GEMINI_API_KEY,
   )}`;
@@ -141,9 +141,9 @@ async function synthesizeLinesWithGeminiTTS(lines = []) {
           parts: [{ text }],
         },
       ],
-      // AI Studio의 "Get code"에서 준 형식 그대로 사용
+      // AI Studio의 "Get code"에서 준 형식 그대로 사용 (소문자 audio)
       generationConfig: {
-        responseModalities: ['AUDIO'],
+        responseModalities: ['audio'],
         temperature: 1,
         speech_config: {
           voice_config: {
@@ -359,7 +359,7 @@ app.post('/practice', async (req, res) => {
       tts: {
         provider: 'google-gemini',
         voice: 'Leda',
-        model: 'gemini-2.5-pro-preview-tts',
+        model: 'gemini-2.5-flash-tts',
       },
     });
   } catch (e) {
