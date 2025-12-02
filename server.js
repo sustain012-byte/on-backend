@@ -3,12 +3,29 @@
 
 const express = require('express');
 const cors = require('cors');
-const textToSpeech = require('@google-cloud/text-to-speech');  // ✅ 추가
+const textToSpeech = require('@google-cloud/text-to-speech');
+const fs = require('fs');
+const path = require('path');
+
+// ================== Google TTS 자격증명 세팅 ==================
+const credJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+if (credJson) {
+  const credPath = path.join(__dirname, 'gcp-key.json');
+  try {
+    fs.writeFileSync(credPath, credJson);
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = credPath;
+    console.log('Google credentials loaded at:', credPath);
+  } catch (e) {
+    console.error('Failed to write gcp-key.json', e);
+  }
+} else {
+  console.warn('⚠️ GOOGLE_APPLICATION_CREDENTIALS_JSON 환경변수가 비어 있습니다.');
+}
+
+// ✅ 자격증명 세팅 이후에 클라이언트 생성
+const ttsClient = new textToSpeech.TextToSpeechClient();
 
 const app = express();
-
-// ✅ Google TTS 클라이언트 생성
-const ttsClient = new textToSpeech.TextToSpeechClient();
 
 // 🔐 반드시 Render 대시보드에 OPENAI_API_KEY 환경변수 넣어줘야 함
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -31,9 +48,6 @@ app.use(cors(corsOptions));
 
 // 프리플라이트(OPTIONS) 요청 미리 핸들링
 app.options('*', cors(corsOptions));
-// 필요하면 개별 라우트만 따로 열 수도 있음(중복 무해)
-// app.options('/classifysuggest', cors(corsOptions));
-// app.options('/practice', cors(corsOptions));
 
 /* (선택) 디버깅용 요청 로그 — 나중에 시끄러우면 지워도 됨 */
 app.use((req, res, next) => {
@@ -101,7 +115,6 @@ async function callOpenAI(model, temperature, systemMsg, userJson) {
 async function synthesizeLinesWithGoogleTTS(lines = []) {
   if (!Array.isArray(lines) || !lines.length) return [];
 
-  // 각 문장을 개별 호출 (필요하면 나중에 병렬 최적화 가능)
   const results = [];
   for (const text of lines) {
     if (!text) {
@@ -112,15 +125,15 @@ async function synthesizeLinesWithGoogleTTS(lines = []) {
     const request = {
       input: { text },
       voice: {
-  languageCode: 'ko-KR',
-  // name은 AI Studio에서 선택한 화자 ID 그대로 써야 함 (예: 'SunHi', 'Kore' 등)
-  name: 'SunHi',              // ← 우선 이렇게 두고, 나중에 실제 이름으로 바꾸기
-  modelName: 'gemini-2.5-flash-tts'
-},
+        languageCode: 'ko-KR',
+        // AI Studio에서 설정한 화자 이름 / 모델
+        name: 'SunHi',
+        modelName: 'gemini-2.5-flash-tts',
+      },
       audioConfig: {
         audioEncoding: 'LINEAR16',
         speakingRate: 0.97,
-        sampleRateHertz: 44100
+        sampleRateHertz: 44100,
       }
     };
 
@@ -130,7 +143,8 @@ async function synthesizeLinesWithGoogleTTS(lines = []) {
       results.push(audioBase64);
     } catch (e) {
       console.error('[TTS] synthesize error for text:', text, e);
-      results.push(null); // 실패한 건 null로 채워두고 텍스트만 사용
+      // 실패한 건 null로 채우고, 프런트에선 브라우저 TTS 폴백
+      results.push(null);
     }
   }
 
@@ -223,7 +237,6 @@ app.post('/classifysuggest', async (req, res) => {
     let { text = '', lang = 'ko' } = req.body || {};
     text = String(text || '').slice(0, 3000);
 
-    // 각 영역당 3문장 고정
     const TOP_K = 3;
 
     if (!text) {
@@ -231,7 +244,6 @@ app.post('/classifysuggest', async (req, res) => {
     }
 
     const out = await callOpenAI(
-      // 🔄 여기서 gpt-5-mini 사용
       'gpt-4.1-mini',
       null,
       PROMPTS.classifySuggest.system,
@@ -242,7 +254,6 @@ app.post('/classifysuggest', async (req, res) => {
       return (Array.isArray(arr) ? arr : [])
         .slice(0, TOP_K)
         .map(c => ({
-          // text만 남기고 나머지는 버림
           text: normalizeDa(c && c.text || '')
         }))
         .filter(c => c.text);
@@ -277,7 +288,6 @@ app.post('/practice', async (req, res) => {
     }
 
     const out = await callOpenAI(
-      // 🔄 여기서 gpt-5.1 사용 (고품질 ACT 문장)
       'gpt-5.1',
       0.2,
       PROMPTS.practice.system,
@@ -299,7 +309,6 @@ app.post('/practice', async (req, res) => {
       })
       .filter(Boolean);
 
-    // 7개 안 채워지면 기본 문장으로 채우기
     while (arr.length < 7) {
       arr.push({ text: normalizeDa('나는 지금의 나를 있는 그대로 둔다') });
     }
@@ -321,8 +330,8 @@ app.post('/practice', async (req, res) => {
       used_model: 'gpt-5.1',
       tts: {
         provider: 'google',
-        voice: 'Leda',
-        model: 'gemini-2.5-flash'
+        voice: 'SunHi',
+        model: 'gemini-2.5-flash-tts'
       }
     });
 
