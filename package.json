@@ -7,10 +7,9 @@
     "start": "node server.js"
   },
   "dependencies": {
-  "cors": "^2.8.5",
-  "express": "^4.19.2",
-  "@google-cloud/text-to-speech": "^5.7.0"
-},
+    "cors": "^2.8.5",
+    "express": "^4.19.2"
+  },
   "engines": {
     "node": ">=18"
   }
