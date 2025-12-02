@@ -121,10 +121,11 @@ async function synthesizeLinesWithGeminiTTS(lines = []) {
     return lines.map(() => null);
   }
 
-  const MODEL_ID = "gemini-2.5-flash-preview-tts";
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_ID}:generateContent?key=${encodeURIComponent(
-    GEMINI_API_KEY,
-  )}`;
+// --- Gemini TTS API 호출 부분 ---
+const MODEL_ID = "gemini-2.5-flash-preview-tts";
+const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_ID}:streamGenerateContent?key=${encodeURIComponent(
+  GEMINI_API_KEY,
+)}`;
 
   const results = [];
 
@@ -351,17 +352,18 @@ app.post('/practice', async (req, res) => {
     // Gemini Leda TTS 호출
     const audioList = await synthesizeLinesWithGeminiTTS(lines);
 
-    res.json({
-      ok: true,
-      used_model: 'gpt-5.1',
-      practice_sets_json: arr,
-      audio_base64_list: audioList,
-      tts: {
-        provider: 'google-gemini',
-        voice: 'Leda',
-        model: 'gemini-2.5-flash-preview-tts',},
-      },
-    });
+// --- /practice 응답 부분 ---
+res.json({
+  ok: true,
+  used_model: 'gpt-5.1',
+  practice_sets_json: arr,
+  audio_base64_list: audioList,
+  tts: {
+    provider: 'google-gemini',
+    voice: 'Leda',
+    model: 'gemini-2.5-flash-preview-tts',
+  },
+});
   } catch (e) {
     console.error('[/practice] error', e);
     res.status(500).json({ ok: false, error: e.message });
