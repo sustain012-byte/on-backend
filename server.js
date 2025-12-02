@@ -121,7 +121,7 @@ async function synthesizeLinesWithGeminiTTS(lines = []) {
     return lines.map(() => null);
   }
 
-  const MODEL_ID = "gemini-2.5-flash-tts";
+  const MODEL_ID = "gemini-2.5-flash-preview-tts";
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_ID}:generateContent?key=${encodeURIComponent(
     GEMINI_API_KEY,
   )}`;
@@ -359,7 +359,7 @@ app.post('/practice', async (req, res) => {
       tts: {
         provider: 'google-gemini',
         voice: 'Leda',
-        model: 'gemini-2.5-flash-tts',
+        model: 'gemini-2.5-flash-preview-tts',},
       },
     });
   } catch (e) {
