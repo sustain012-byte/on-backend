@@ -1,61 +1,27 @@
 // ======================================================
-// server.js — Vertex AI TTS (Leda, OAuth) + OpenAI 백엔드
+// server.js — OpenAI + Google Gemini TTS(Leda) 버전
 // ======================================================
 
 const express = require('express');
 const cors = require('cors');
-const { GoogleAuth } = require('google-auth-library');
 
 const app = express();
 
 // ================== 환경변수 ==================
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const SERVICE_ACCOUNT_JSON = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
-const VERTEX_PROJECT_ID = process.env.VERTEX_PROJECT_ID;
-const VERTEX_LOCATION = 'asia-northeast3'; // 한국 리전 고정
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY; // Google AI Studio 키
 
 if (!OPENAI_API_KEY) console.warn('⚠️ OPENAI_API_KEY 없음');
-if (!SERVICE_ACCOUNT_JSON) console.warn('⚠️ GOOGLE_APPLICATION_CREDENTIALS_JSON 없음');
-if (!VERTEX_PROJECT_ID) console.warn('⚠️ VERTEX_PROJECT_ID 없음');
-
-// ================== Vertex OAuth 클라이언트 ==================
-let vertexAuth = null;
-
-if (SERVICE_ACCOUNT_JSON) {
-  try {
-    const creds = JSON.parse(SERVICE_ACCOUNT_JSON);
-    vertexAuth = new GoogleAuth({
-      credentials: creds,
-      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
-    });
-    console.log('✅ Vertex GoogleAuth 초기화 완료');
-  } catch (e) {
-    console.error('❌ SERVICE_ACCOUNT_JSON 파싱 실패:', e);
-  }
-}
-
-// access token 얻는 헬퍼
-async function getVertexAccessToken() {
-  if (!vertexAuth) {
-    console.warn('⚠️ vertexAuth 미초기화 상태');
-    return null;
-  }
-  const client = await vertexAuth.getClient();
-  const token = await client.getAccessToken();
-  // google-auth-library 버전에 따라 string 또는 {token: "..."} 형태라서 둘 다 처리
-  return typeof token === 'string' ? token : token?.token || null;
-}
+if (!GEMINI_API_KEY) console.warn('⚠️ GEMINI_API_KEY 없음');
 
 // ======================================================
 // CORS 설정
 // ======================================================
-app.use(
-  cors({
-    origin: '*',
-    methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type'],
-  })
-);
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type'],
+}));
 app.options('*', cors());
 
 app.use(express.json({ limit: '1mb' }));
@@ -79,7 +45,7 @@ async function callOpenAI(model, temperature, systemMsg, userJson) {
     response_format: { type: 'json_object' },
   };
 
-  // gpt-5 계열은 temperature 안 넣음
+  // gpt-5 계열은 temperature 안 넣기
   if (!/^gpt-5/.test(model) && typeof temperature === 'number') {
     payload.temperature = temperature;
   }
@@ -93,11 +59,11 @@ async function callOpenAI(model, temperature, systemMsg, userJson) {
     },
     body: JSON.stringify(payload),
   });
-  const t1 = Date.now();
-  console.log(`[OPENAI] model=${model} elapsed=${t1 - t0}ms`);
+  const elapsed = Date.now() - t0;
+  console.log(`[OPENAI] model=${model} elapsed=${elapsed}ms status=${res.status}`);
 
   if (!res.ok) {
-    const err = await res.text();
+    const err = await res.text().catch(() => '');
     throw new Error('OPENAI ERROR ' + err);
   }
 
@@ -123,35 +89,26 @@ function normalizeDa(t) {
 }
 
 // ======================================================
-// Vertex AI TTS — Leda 음성 생성 (OAuth)
+// Google Gemini TTS — Leda 음성 생성
 // ======================================================
 //
-// lines: ["문장1","문장2",...]
-// → base64 WAV 배열 반환
+// lines: ["문장1", "문장2", ...]
+// → ["base64오디오1", "base64오디오2", ...]
 //
-async function synthesizeLinesWithVertexTTS(lines = []) {
+async function synthesizeLinesWithGeminiTTS(lines = []) {
   if (!Array.isArray(lines) || !lines.length) return [];
 
-  if (!vertexAuth || !VERTEX_PROJECT_ID) {
-    console.warn('⚠️ Vertex 설정이 없어 TTS를 건너뜁니다.');
+  if (!GEMINI_API_KEY) {
+    console.warn('⚠️ GEMINI_API_KEY 없음 — TTS 건너뜀');
     return lines.map(() => null);
   }
+
+  const MODEL_ID = 'gemini-2.5-pro-preview-tts';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_ID}:generateContent?key=${encodeURIComponent(
+    GEMINI_API_KEY,
+  )}`;
 
   const results = [];
-
-  // 토큰은 한 번만 받아서 여러 문장에 재사용
-  let accessToken = null;
-  try {
-    accessToken = await getVertexAccessToken();
-  } catch (e) {
-    console.error('❌ Vertex access token 발급 실패:', e);
-    return lines.map(() => null);
-  }
-
-  if (!accessToken) {
-    console.error('❌ Vertex access token이 비어 있습니다.');
-    return lines.map(() => null);
-  }
 
   for (const text of lines) {
     if (!text) {
@@ -166,68 +123,66 @@ async function synthesizeLinesWithVertexTTS(lines = []) {
           parts: [{ text }],
         },
       ],
-      tools: [
-        {
-          speech_synthesis: {
-            voice: {
-              // AI Studio 데모에서 사용한 한국어 Leda
+      // AI Studio의 "Get code"에서 준 형식 그대로 사용
+      generationConfig: {
+        responseModalities: ['AUDIO'],
+        temperature: 1,
+        speech_config: {
+          voice_config: {
+            prebuilt_voice_config: {
               voice_name: 'Leda',
-              language_code: 'ko-KR',
             },
           },
         },
-      ],
-      generation_config: {
-        response_mime_type: 'audio/wav',
       },
     };
-
-    const url =
-      `https://${VERTEX_LOCATION}-aiplatform.googleapis.com/v1/` +
-      `projects/${VERTEX_PROJECT_ID}/locations/${VERTEX_LOCATION}` +
-      `/publishers/google/models/gemini-2.5-flash-tts:generateContent`;
 
     try {
       const t0 = Date.now();
       const res = await fetch(url, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`, // 🔑 여기!
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      const t1 = Date.now();
+      const elapsed = Date.now() - t0;
       console.log(
-        `[Vertex TTS] len=${text.length} elapsed=${t1 - t0}ms status=${res.status}`
+        `[GEMINI_TTS] len=${text.length} elapsed=${elapsed}ms status=${res.status}`,
       );
 
       if (!res.ok) {
         const errTxt = await res.text().catch(() => '');
-        console.error('[Vertex TTS HTTP ERROR]', res.status, errTxt);
+        console.error('[GEMINI_TTS HTTP ERROR]', res.status, errTxt);
         results.push(null);
         continue;
       }
 
       const data = await res.json();
 
-      // candidates[0].content.parts[*].inline_data.data 에 audio가 들어 있음
+      // candidates[0].content.parts[*].inline_data.data 또는 audio.data 중 하나에 들어옴
       const parts = data?.candidates?.[0]?.content?.parts || [];
-      const inlinePart = parts.find(
-        (p) => p.inline_data && p.inline_data.data
-      );
-      const base64audio = inlinePart?.inline_data?.data || null;
+      let base64audio = null;
+
+      for (const p of parts) {
+        if (p.inline_data && p.inline_data.data) {
+          base64audio = p.inline_data.data;
+          break;
+        }
+        if (p.audio && p.audio.data) {
+          base64audio = p.audio.data;
+          break;
+        }
+      }
 
       if (!base64audio) {
         console.warn(
-          '[Vertex TTS] 오디오 데이터를 찾지 못했습니다.',
-          JSON.stringify(data).slice(0, 200) + '...'
+          '[GEMINI_TTS] 오디오 데이터를 찾지 못했습니다.',
+          JSON.stringify(data).slice(0, 200) + '...',
         );
       }
 
-      results.push(base64audio);
+      results.push(base64audio || null);
     } catch (e) {
-      console.error('[Vertex TTS EXCEPTION]: ', e);
+      console.error('[GEMINI_TTS EXCEPTION]', e);
       results.push(null);
     }
   }
@@ -308,13 +263,13 @@ const PROMPTS = {
 app.post('/classifysuggest', async (req, res) => {
   try {
     let { text = '' } = req.body || {};
-    text = String(text || '').slice(0, 3000);
+    text = text.slice(0, 3000);
 
     const out = await callOpenAI(
       'gpt-4.1-mini',
       null,
       PROMPTS.classifySuggest.system,
-      { text }
+      { text },
     );
 
     const TOP_K = 3;
@@ -347,11 +302,14 @@ app.post('/classifysuggest', async (req, res) => {
 app.post('/practice', async (req, res) => {
   try {
     let { text = '' } = req.body || {};
-    text = String(text || '').slice(0, 3000);
+    text = text.slice(0, 3000);
 
-    const out = await callOpenAI('gpt-5.1', 0.2, PROMPTS.practice.system, {
-      text,
-    });
+    const out = await callOpenAI(
+      'gpt-5.1',
+      0.2,
+      PROMPTS.practice.system,
+      { text },
+    );
 
     let arr = [];
 
@@ -364,7 +322,7 @@ app.post('/practice', async (req, res) => {
     arr = arr
       .slice(0, 7)
       .map((x) => ({ text: normalizeDa(x.text) }))
-      .filter((x) => x.text);
+      .filter(Boolean);
 
     while (arr.length < 7) {
       arr.push({ text: '나는 지금의 나를 있는 그대로 둔다' });
@@ -372,8 +330,8 @@ app.post('/practice', async (req, res) => {
 
     const lines = arr.map((x) => x.text);
 
-    // Vertex Leda TTS 호출
-    const audioList = await synthesizeLinesWithVertexTTS(lines);
+    // Gemini Leda TTS 호출
+    const audioList = await synthesizeLinesWithGeminiTTS(lines);
 
     res.json({
       ok: true,
@@ -381,9 +339,9 @@ app.post('/practice', async (req, res) => {
       practice_sets_json: arr,
       audio_base64_list: audioList,
       tts: {
-        provider: 'vertex-ai',
+        provider: 'google-gemini',
         voice: 'Leda',
-        model: 'gemini-2.5-flash-tts',
+        model: 'gemini-2.5-pro-preview-tts',
       },
     });
   } catch (e) {
@@ -394,7 +352,7 @@ app.post('/practice', async (req, res) => {
 
 // ======================================================
 app.get('/', (_, res) =>
-  res.send('ON backend is running (Vertex TTS Leda OAuth)')
+  res.send('ON backend is running (Gemini Leda TTS)'),
 );
 
 // ======================================================
