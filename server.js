@@ -178,10 +178,17 @@ const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_ID}
       const data = await res.json();
 
       // candidates[0].content.parts[*].inline_data.data 또는 audio.data 중 하나에 들어옴
+            // candidates[0].content.parts[*].inlineData.data 에 오디오(Base64)가 들어온다
       const parts = data?.candidates?.[0]?.content?.parts || [];
       let base64audio = null;
 
       for (const p of parts) {
+        // 1) AI Studio REST 예제: inlineData (camelCase)
+        if (p.inlineData && p.inlineData.data) {
+          base64audio = p.inlineData.data;
+          break;
+        }
+        // 2) 혹시 다른 형식을 쓸 수도 있으니까 예비로 둘 것들
         if (p.inline_data && p.inline_data.data) {
           base64audio = p.inline_data.data;
           break;
