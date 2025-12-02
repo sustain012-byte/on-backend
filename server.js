@@ -3,8 +3,12 @@
 
 const express = require('express');
 const cors = require('cors');
+const textToSpeech = require('@google-cloud/text-to-speech');  // ✅ 추가
 
 const app = express();
+
+// ✅ Google TTS 클라이언트 생성
+const ttsClient = new textToSpeech.TextToSpeechClient();
 
 // 🔐 반드시 Render 대시보드에 OPENAI_API_KEY 환경변수 넣어줘야 함
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -87,6 +91,50 @@ async function callOpenAI(model, temperature, systemMsg, userJson) {
   txt = String(txt).replace(/^```json/, '').replace(/```$/, '').trim();
 
   return JSON.parse(txt || '{}');
+}
+
+/* ======== Google TTS 헬퍼 ======== */
+/**
+ * lines: ["문장1", "문장2", ...] 형태의 배열
+ * 반환: ["base64오디오1", "base64오디오2", ...]
+ */
+async function synthesizeLinesWithGoogleTTS(lines = []) {
+  if (!Array.isArray(lines) || !lines.length) return [];
+
+  // 각 문장을 개별 호출 (필요하면 나중에 병렬 최적화 가능)
+  const results = [];
+  for (const text of lines) {
+    if (!text) {
+      results.push(null);
+      continue;
+    }
+
+    const request = {
+      input: { text },
+      voice: {
+  languageCode: 'ko-KR',
+  // name은 AI Studio에서 선택한 화자 ID 그대로 써야 함 (예: 'SunHi', 'Kore' 등)
+  name: 'SunHi',              // ← 우선 이렇게 두고, 나중에 실제 이름으로 바꾸기
+  modelName: 'gemini-2.5-flash-tts'
+},
+      audioConfig: {
+        audioEncoding: 'LINEAR16',
+        speakingRate: 0.97,
+        sampleRateHertz: 44100
+      }
+    };
+
+    try {
+      const [response] = await ttsClient.synthesizeSpeech(request);
+      const audioBase64 = Buffer.from(response.audioContent).toString('base64');
+      results.push(audioBase64);
+    } catch (e) {
+      console.error('[TTS] synthesize error for text:', text, e);
+      results.push(null); // 실패한 건 null로 채워두고 텍스트만 사용
+    }
+  }
+
+  return results;
 }
 
 // ======== 텍스트 정리 유틸 (GAS 버전과 동일하게) ========
@@ -219,7 +267,6 @@ app.post('/classifysuggest', async (req, res) => {
 });
 
 // ======== 라우트: /practice ========
-
 app.post('/practice', async (req, res) => {
   try {
     let { text = '', lang = 'ko' } = req.body || {};
@@ -257,10 +304,26 @@ app.post('/practice', async (req, res) => {
       arr.push({ text: normalizeDa('나는 지금의 나를 있는 그대로 둔다') });
     }
 
+    // ✅ 여기서 Google TTS 호출 (문장 배열 -> base64 오디오 배열)
+    let audioList = [];
+    try {
+      const lines = arr.map(item => item.text);
+      audioList = await synthesizeLinesWithGoogleTTS(lines);
+    } catch (e) {
+      console.error('[/practice] TTS error, fallback to text-only', e);
+      audioList = [];
+    }
+
     return res.json({
-      ok:true,
-      practice_sets_json: arr,
-      used_model:'gpt-5.1'
+      ok: true,
+      practice_sets_json: arr,        // [{ text }]
+      audio_base64_list: audioList,   // ["...base64...", ...] (실패한 건 null)
+      used_model: 'gpt-5.1',
+      tts: {
+        provider: 'google',
+        voice: 'Leda',
+        model: 'gemini-2.5-flash'
+      }
     });
 
   } catch (err) {
