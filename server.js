@@ -121,18 +121,16 @@ async function synthesizeLinesWithGeminiTTS(lines = []) {
     return lines.map(() => null);
   }
 
-  // ✅ streamGenerateContent 말고, 일반 generateContent 사용
   const MODEL_ID = "gemini-2.5-flash-preview-tts";
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_ID}:generateContent?key=${encodeURIComponent(
     GEMINI_API_KEY,
   )}`;
 
-  const results = [];
-
-  for (const text of lines) {
+  // ⭐ 각 문장(text)마다 비동기 작업(Promise)을 하나씩 만든다
+  const tasks = lines.map((text) => {
     if (!text) {
-      results.push(null);
-      continue;
+      // 비어 있으면 그냥 null 리턴하는 Promise
+      return Promise.resolve(null);
     }
 
     const body = {
@@ -155,70 +153,70 @@ async function synthesizeLinesWithGeminiTTS(lines = []) {
       },
     };
 
-    try {
-      const t0 = Date.now();
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const elapsed = Date.now() - t0;
-      console.log(
-        `[GEMINI_TTS] len=${text.length} elapsed=${elapsed}ms status=${res.status}`,
-      );
-
-      if (!res.ok) {
-        const errTxt = await res.text().catch(() => '');
-        console.error('[GEMINI_TTS HTTP ERROR]', res.status, errTxt);
-        results.push(null);
-        continue;
-      }
-
-      const data = await res.json();
-
-      // ✅ 1) 응답이 배열일 수도 있고, 객체일 수도 있음 → 통합 처리
-      let payload = data;
-      if (Array.isArray(payload)) {
-        // candidates가 있는 첫 번째 청크를 사용
-        payload =
-          payload.find(ch => ch?.candidates?.[0]?.content?.parts?.length) ||
-          payload[0];
-      }
-
-      // ✅ 2) inlineData (camelCase) 안에 base64 오디오 들어 있음
-      const parts = payload?.candidates?.[0]?.content?.parts || [];
-      let base64audio = null;
-
-      for (const p of parts) {
-        if (p.inlineData && p.inlineData.data) {
-          base64audio = p.inlineData.data;
-          break;
-        }
-        // 혹시 다른 포맷으로 올 가능성까지 대비
-        if (p.inline_data && p.inline_data.data) {
-          base64audio = p.inline_data.data;
-          break;
-        }
-        if (p.audio && p.audio.data) {
-          base64audio = p.audio.data;
-          break;
-        }
-      }
-
-      if (!base64audio) {
-        console.warn(
-          '[GEMINI_TTS] 오디오 데이터를 찾지 못했습니다.',
-          JSON.stringify(payload).slice(0, 200) + '...',
+    // 🔹 여기부터는 "한 문장에 대한 TTS 요청"을 비동기 처리
+    return (async () => {
+      try {
+        const t0 = Date.now();
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const elapsed = Date.now() - t0;
+        console.log(
+          `[GEMINI_TTS] len=${text.length} elapsed=${elapsed}ms status=${res.status}`,
         );
+
+        if (!res.ok) {
+          const errTxt = await res.text().catch(() => '');
+          console.error('[GEMINI_TTS HTTP ERROR]', res.status, errTxt);
+          return null;
+        }
+
+        const data = await res.json();
+
+        let payload = data;
+        if (Array.isArray(payload)) {
+          payload =
+            payload.find(ch => ch?.candidates?.[0]?.content?.parts?.length) ||
+            payload[0];
+        }
+
+        const parts = payload?.candidates?.[0]?.content?.parts || [];
+        let base64audio = null;
+
+        for (const p of parts) {
+          if (p.inlineData && p.inlineData.data) {
+            base64audio = p.inlineData.data;
+            break;
+          }
+          if (p.inline_data && p.inline_data.data) {
+            base64audio = p.inline_data.data;
+            break;
+          }
+          if (p.audio && p.audio.data) {
+            base64audio = p.audio.data;
+            break;
+          }
+        }
+
+        if (!base64audio) {
+          console.warn(
+            '[GEMINI_TTS] 오디오 데이터를 찾지 못했습니다.',
+            JSON.stringify(payload).slice(0, 200) + '...',
+          );
+        }
+
+        return base64audio || null;
+      } catch (e) {
+        console.error('[GEMINI_TTS EXCEPTION]', e);
+        return null;
       }
+    })();
+  });
 
-      results.push(base64audio || null);
-    } catch (e) {
-      console.error('[GEMINI_TTS EXCEPTION]', e);
-      results.push(null);
-    }
-  }
-
+  // ⭐ 병렬 실행: 모든 문장 TTS 요청을 동시에 보낸 뒤, 한 번에 결과 수집
+  const results = await Promise.all(tasks);
   return results;
 }
 
