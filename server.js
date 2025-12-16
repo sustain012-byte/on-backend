@@ -1,5 +1,6 @@
 // ======================================================
 // server.js — OpenAI + Google Gemini TTS(Leda) 버전
+// + classify job(끊김 방지) 추가
 // ======================================================
 
 const express = require('express');
@@ -12,25 +13,19 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 // Gemini 키는 이름이 헷갈릴 수 있어서 후보 몇 개를 다 확인한다
 const GEMINI_API_KEY =
-  process.env.GEMINI_API_KEY ||   // 우리가 지금 쓰려는 이름
-  process.env.Gemini_API ||       // 혹시 이렇게 만들어 둔 경우
-  process.env.gemini_api ||       // 전부 소문자로 만든 경우
-  '';                             // 아무 것도 없으면 빈 문자열
+  process.env.GEMINI_API_KEY ||
+  process.env.Gemini_API ||
+  process.env.gemini_api ||
+  '';
 
-// 디버깅: 실제로 process.env에 어떤 'gemini' 관련 키가 있는지 출력
 const geminiEnvKeys = Object.keys(process.env).filter(k =>
   k.toLowerCase().includes('gemini')
 );
 console.log('[ENV] GEMINI 관련 키들:', geminiEnvKeys);
 
-if (!OPENAI_API_KEY) {
-  console.warn('⚠️ OPENAI_API_KEY 없음');
-}
-if (!GEMINI_API_KEY) {
-  console.warn('⚠️ GEMINI_API_KEY 없음 — TTS는 텍스트만 동작');
-} else {
-  console.log('✅ GEMINI_API_KEY 감지:', GEMINI_API_KEY.slice(0, 8) + '...');
-}
+if (!OPENAI_API_KEY) console.warn('⚠️ OPENAI_API_KEY 없음');
+if (!GEMINI_API_KEY) console.warn('⚠️ GEMINI_API_KEY 없음 — TTS는 텍스트만 동작');
+else console.log('✅ GEMINI_API_KEY 감지:', GEMINI_API_KEY.slice(0, 8) + '.');
 
 // ======================================================
 // CORS 설정
@@ -86,10 +81,8 @@ async function callOpenAI(model, temperature, systemMsg, userJson) {
   }
 
   const data = await res.json();
-
   let raw = data?.choices?.[0]?.message?.content ?? '{}';
   raw = raw.replace(/^```json/, '').replace(/```$/, '').trim();
-
   return JSON.parse(raw || '{}');
 }
 
@@ -100,7 +93,7 @@ function normalizeDa(t) {
   let s = String(t || '').trim();
   s = s
     .replace(/["']/g, '')
-    .replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '') // 이모지 제거
+    .replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '') // 이모지 제거(대충)
     .replace(/[?!…]+$/, '')
     .trim();
   return s;
@@ -109,10 +102,6 @@ function normalizeDa(t) {
 // ======================================================
 // Google Gemini TTS — Leda 음성 생성
 // ======================================================
-//
-// lines: ["문장1", "문장2", ...]
-// → ["base64오디오1", "base64오디오2", ...]
-//
 async function synthesizeLinesWithGeminiTTS(lines = []) {
   if (!Array.isArray(lines) || !lines.length) return [];
 
@@ -126,34 +115,24 @@ async function synthesizeLinesWithGeminiTTS(lines = []) {
     GEMINI_API_KEY,
   )}`;
 
-  // ⭐ 각 문장(text)마다 비동기 작업(Promise)을 하나씩 만든다
   const tasks = lines.map((text) => {
-    if (!text) {
-      // 비어 있으면 그냥 null 리턴하는 Promise
-      return Promise.resolve(null);
-    }
+    if (!text) return Promise.resolve(null);
 
     const body = {
       contents: [
-        {
-          role: 'user',
-          parts: [{ text }],
-        },
+        { role: 'user', parts: [{ text }] },
       ],
       generationConfig: {
-        responseModalities: ['audio'],  // 소문자 audio
+        responseModalities: ['audio'],
         temperature: 1,
         speech_config: {
           voice_config: {
-            prebuilt_voice_config: {
-              voice_name: 'Leda',
-            },
+            prebuilt_voice_config: { voice_name: 'Leda' },
           },
         },
       },
     };
 
-    // 🔹 여기부터는 "한 문장에 대한 TTS 요청"을 비동기 처리
     return (async () => {
       try {
         const t0 = Date.now();
@@ -163,9 +142,7 @@ async function synthesizeLinesWithGeminiTTS(lines = []) {
           body: JSON.stringify(body),
         });
         const elapsed = Date.now() - t0;
-        console.log(
-          `[GEMINI_TTS] len=${text.length} elapsed=${elapsed}ms status=${res.status}`,
-        );
+        console.log(`[GEMINI_TTS] len=${text.length} elapsed=${elapsed}ms status=${res.status}`);
 
         if (!res.ok) {
           const errTxt = await res.text().catch(() => '');
@@ -174,7 +151,6 @@ async function synthesizeLinesWithGeminiTTS(lines = []) {
         }
 
         const data = await res.json();
-
         let payload = data;
         if (Array.isArray(payload)) {
           payload =
@@ -186,25 +162,13 @@ async function synthesizeLinesWithGeminiTTS(lines = []) {
         let base64audio = null;
 
         for (const p of parts) {
-          if (p.inlineData && p.inlineData.data) {
-            base64audio = p.inlineData.data;
-            break;
-          }
-          if (p.inline_data && p.inline_data.data) {
-            base64audio = p.inline_data.data;
-            break;
-          }
-          if (p.audio && p.audio.data) {
-            base64audio = p.audio.data;
-            break;
-          }
+          if (p.inlineData && p.inlineData.data) { base64audio = p.inlineData.data; break; }
+          if (p.inline_data && p.inline_data.data) { base64audio = p.inline_data.data; break; }
+          if (p.audio && p.audio.data) { base64audio = p.audio.data; break; }
         }
 
         if (!base64audio) {
-          console.warn(
-            '[GEMINI_TTS] 오디오 데이터를 찾지 못했습니다.',
-            JSON.stringify(payload).slice(0, 200) + '...',
-          );
+          console.warn('[GEMINI_TTS] 오디오 데이터를 찾지 못했습니다.', JSON.stringify(payload).slice(0, 200) + '...');
         }
 
         return base64audio || null;
@@ -215,7 +179,6 @@ async function synthesizeLinesWithGeminiTTS(lines = []) {
     })();
   });
 
-  // ⭐ 병렬 실행: 모든 문장 TTS 요청을 동시에 보낸 뒤, 한 번에 결과 수집
   const results = await Promise.all(tasks);
   return results;
 }
@@ -231,9 +194,9 @@ const PROMPTS = {
 
 [4개 범주 정의]
 1) situation: 사건, 맥락, 환경, 타인과의 상호작용 등 "무엇이 일어났는가".
-2) feeling: 감정(정서) + 신체감각. 단순 감정 단어가 아닌 구체적 경험.
-3) thought: 해석, 평가, 자동적 사고, 자기비판, 미래 예상, 의미부여.
-4) behavior: 실제 행동, 선택, 말, 몸의 반응. 심리적 회피·접근은 단어로 쓰지 말고 자연스러운 행동 문장으로 기술.
+2) feeling: 감정/정서 (신체감각은 feeling에 포함 가능).
+3) thought: 머릿속에 떠오른 생각/해석/판단/신념.
+4) behavior: 그때 했던 행동/반응.
 
 [출력 규칙]
 - 각 범주마다 정확히 3문장.
@@ -279,7 +242,6 @@ const PROMPTS = {
   "practice_sets_json": [
     {"text": "문장1"},
     {"text": "문장2"},
-    ...
     {"text": "문장7"}
   ]
 }
@@ -288,7 +250,7 @@ const PROMPTS = {
 };
 
 // ======================================================
-// /classifysuggest
+// /classifysuggest  (기존 유지)
 // ======================================================
 app.post('/classifysuggest', async (req, res) => {
   try {
@@ -315,9 +277,9 @@ app.post('/classifysuggest', async (req, res) => {
       used_model: 'gpt-4.1-mini',
       result: {
         situation: { cards: clean(out?.situation?.cards) },
-        feeling: { cards: clean(out?.feeling?.cards) },
-        thought: { cards: clean(out?.thought?.cards) },
-        behavior: { cards: clean(out?.behavior?.cards) },
+        feeling:   { cards: clean(out?.feeling?.cards) },
+        thought:   { cards: clean(out?.thought?.cards) },
+        behavior:  { cards: clean(out?.behavior?.cards) },
       },
     });
   } catch (e) {
@@ -327,7 +289,165 @@ app.post('/classifysuggest', async (req, res) => {
 });
 
 // ======================================================
-// /practice
+// ✅ classify job (끊김 방지) — NEW
+// - start: POST /classifyjob/start
+// - result: GET  /classifyjob/result?job_id=...
+// ======================================================
+
+const JOB_TTL_MS = 10 * 60 * 1000; // 10분 (원하면 늘려도 됨)
+const jobsById = new Map();        // job_id -> job
+const jobsByKey = new Map();       // key -> job_id
+
+function now() { return Date.now(); }
+function makeJobId() {
+  return 'job_' + Math.random().toString(36).slice(2) + now().toString(36);
+}
+function makeKey({ user_id, entry_id, text_hash, text }) {
+  const u = String(user_id || 'anon');
+  const e = String(entry_id || '');
+  const h = String(text_hash || '');
+  const t = String(text || '').slice(0, 300); // 혹시 hash가 없을 때만 약간 섞기
+  return `${u}|${e}|${h}|${t}`;
+}
+function pruneJobs() {
+  const t = now();
+  for (const [job_id, job] of jobsById.entries()) {
+    if (t - job.created_at > JOB_TTL_MS) {
+      jobsById.delete(job_id);
+      if (job.key) jobsByKey.delete(job.key);
+    }
+  }
+}
+setInterval(pruneJobs, 60 * 1000).unref?.();
+
+// job 실행 함수
+async function runClassifyJob(job_id) {
+  const job = jobsById.get(job_id);
+  if (!job) return;
+  if (job.state === 'running') return;
+
+  job.state = 'running';
+  job.updated_at = now();
+
+  try {
+    // ⚠️ 여기서는 기존 /classifysuggest와 "같은 결과"를 생성
+    const text = String(job.payload?.text || '').slice(0, 3000);
+
+    const out = await callOpenAI(
+      'gpt-4.1-mini',
+      null,
+      PROMPTS.classifySuggest.system,
+      { text }
+    );
+
+    const TOP_K = 3;
+    function clean(arr) {
+      return (arr || [])
+        .slice(0, TOP_K)
+        .map((c) => ({ text: normalizeDa(c.text || '') }))
+        .filter((c) => c.text);
+    }
+
+    job.result = {
+      ok: true,
+      used_model: 'gpt-4.1-mini',
+      result: {
+        situation: { cards: clean(out?.situation?.cards) },
+        feeling:   { cards: clean(out?.feeling?.cards) },
+        thought:   { cards: clean(out?.thought?.cards) },
+        behavior:  { cards: clean(out?.behavior?.cards) },
+      },
+    };
+    job.state = 'done';
+    job.updated_at = now();
+  } catch (e) {
+    job.state = 'error';
+    job.error = String(e?.message || e || 'job_failed');
+    job.updated_at = now();
+  }
+}
+
+// start
+app.post('/classifyjob/start', async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const key = makeKey(payload);
+
+    // 이미 같은 key로 job이 있으면 재사용
+    const existId = jobsByKey.get(key);
+    if (existId) {
+      const exist = jobsById.get(existId);
+      if (exist && (now() - exist.created_at) <= JOB_TTL_MS) {
+        return res.json({
+          ok: true,
+          job_id: existId,
+          state: exist.state,
+          // done이면 바로 결과도 같이 줌(왕복 줄이기)
+          ...(exist.state === 'done' ? { result: exist.result?.result ?? exist.result } : {}),
+        });
+      }
+    }
+
+    // 새 job 생성
+    const job_id = makeJobId();
+    const job = {
+      job_id,
+      key,
+      payload,
+      state: 'queued',
+      created_at: now(),
+      updated_at: now(),
+      result: null,
+      error: null,
+    };
+
+    jobsById.set(job_id, job);
+    jobsByKey.set(key, job_id);
+
+    // 비동기 실행(요청 연결과 분리)
+    setTimeout(() => runClassifyJob(job_id), 0);
+
+    res.json({ ok: true, job_id, state: 'queued' });
+  } catch (e) {
+    console.error('[/classifyjob/start] error', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// result (GET)
+app.get('/classifyjob/result', async (req, res) => {
+  try {
+    const job_id = String(req.query.job_id || '');
+    if (!job_id) return res.status(400).json({ ok: false, error: 'missing_job_id' });
+
+    const job = jobsById.get(job_id);
+    if (!job) return res.status(404).json({ ok: false, error: 'job_not_found' });
+
+    if (job.state === 'done') {
+      return res.json({
+        ok: true,
+        job_id,
+        state: 'done',
+        result: job.result?.result ?? job.result,
+      });
+    }
+    if (job.state === 'error') {
+      return res.json({
+        ok: false,
+        job_id,
+        state: 'error',
+        error: job.error || 'job_error',
+      });
+    }
+    return res.json({ ok: true, job_id, state: job.state }); // queued/running
+  } catch (e) {
+    console.error('[/classifyjob/result] error', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ======================================================
+// /practice (기존 유지)
 // ======================================================
 app.post('/practice', async (req, res) => {
   try {
@@ -360,33 +480,29 @@ app.post('/practice', async (req, res) => {
 
     const lines = arr.map((x) => x.text);
 
-    // Gemini Leda TTS 호출
     const audioList = await synthesizeLinesWithGeminiTTS(lines);
 
-// --- /practice 응답 부분 ---
-res.json({
-  ok: true,
-  used_model: 'gpt-5.1',
-  practice_sets_json: arr,
-  audio_base64_list: audioList,
-  tts: {
-    provider: 'google-gemini',
-    voice: 'Leda',
-    model: 'gemini-2.5-flash-preview-tts',
-  },
-});
+    res.json({
+      ok: true,
+      used_model: 'gpt-5.1',
+      practice_sets_json: arr,
+      audio_base64_list: audioList,
+      tts: {
+        provider: 'google-gemini',
+        voice: 'Leda',
+        model: 'gemini-2.5-flash-preview-tts',
+      },
+    });
   } catch (e) {
     console.error('[/practice] error', e);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-// ======================================================
 app.get('/', (_, res) =>
   res.send('ON backend is running (Gemini Leda TTS)'),
 );
 
-// ======================================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 ON backend running on ${PORT}`);
