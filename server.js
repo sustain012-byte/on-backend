@@ -289,55 +289,27 @@ app.post('/classifysuggest', async (req, res) => {
 });
 
 // ======================================================
-// ✅ classify job (끊김 방지) — NEW
-// - start: POST /classifyjob/start
-// - result: GET  /classifyjob/result?job_id=...
+// (NEW) classify job store (in-memory)
+// - Render 한 인스턴스 내에서만 유지됨(간단 MVP)
 // ======================================================
+const CLASSIFY_JOBS = new Map(); // job_id -> { status, result, error, createdAt }
+const CLASSIFY_JOB_KEYS = new Map(); // dedupe key -> job_id
 
-const JOB_TTL_MS = 10 * 60 * 1000; // 10분 (원하면 늘려도 됨)
-const jobsById = new Map();        // job_id -> job
-const jobsByKey = new Map();       // key -> job_id
-
-function now() { return Date.now(); }
 function makeJobId() {
-  return 'job_' + Math.random().toString(36).slice(2) + now().toString(36);
+  return 'job_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
-function makeKey({ user_id, entry_id, text_hash, text }) {
-  const u = String(user_id || 'anon');
-  const e = String(entry_id || '');
-  const h = String(text_hash || '');
-  const t = String(text || '').slice(0, 300); // 혹시 hash가 없을 때만 약간 섞기
-  return `${u}|${e}|${h}|${t}`;
+
+function makeDedupeKey({ user_id, entry_id, text_hash }) {
+  return [user_id || 'nouser', entry_id || 'noentry', text_hash || 'nohash'].join(':');
 }
-function pruneJobs() {
-  const t = now();
-  for (const [job_id, job] of jobsById.entries()) {
-    if (t - job.created_at > JOB_TTL_MS) {
-      jobsById.delete(job_id);
-      if (job.key) jobsByKey.delete(job.key);
-    }
-  }
-}
-setInterval(pruneJobs, 60 * 1000).unref?.();
 
-// job 실행 함수
-async function runClassifyJob(job_id) {
-  const job = jobsById.get(job_id);
-  if (!job) return;
-  if (job.state === 'running') return;
-
-  job.state = 'running';
-  job.updated_at = now();
-
+async function runClassifyJob(job_id, text) {
   try {
-    // ⚠️ 여기서는 기존 /classifysuggest와 "같은 결과"를 생성
-    const text = String(job.payload?.text || '').slice(0, 3000);
-
     const out = await callOpenAI(
       'gpt-4.1-mini',
       null,
       PROMPTS.classifySuggest.system,
-      { text }
+      { text },
     );
 
     const TOP_K = 3;
@@ -348,98 +320,76 @@ async function runClassifyJob(job_id) {
         .filter((c) => c.text);
     }
 
-    job.result = {
-      ok: true,
-      used_model: 'gpt-4.1-mini',
-      result: {
-        situation: { cards: clean(out?.situation?.cards) },
-        feeling:   { cards: clean(out?.feeling?.cards) },
-        thought:   { cards: clean(out?.thought?.cards) },
-        behavior:  { cards: clean(out?.behavior?.cards) },
-      },
+    const result = {
+      situation: { cards: clean(out?.situation?.cards) },
+      feeling:   { cards: clean(out?.feeling?.cards) },
+      thought:   { cards: clean(out?.thought?.cards) },
+      behavior:  { cards: clean(out?.behavior?.cards) },
     };
-    job.state = 'done';
-    job.updated_at = now();
+
+    const job = CLASSIFY_JOBS.get(job_id);
+    if (job) {
+      job.status = 'done';
+      job.result = result;
+    }
   } catch (e) {
-    job.state = 'error';
-    job.error = String(e?.message || e || 'job_failed');
-    job.updated_at = now();
+    const job = CLASSIFY_JOBS.get(job_id);
+    if (job) {
+      job.status = 'error';
+      job.error = e?.message || String(e);
+    }
   }
 }
 
-// start
+// ======================================================
+// (NEW) /classifyjob/start
+// ======================================================
 app.post('/classifyjob/start', async (req, res) => {
   try {
-    const payload = req.body || {};
-    const key = makeKey(payload);
+    let { text = '', user_id = null, entry_id = null, text_hash = null } = req.body || {};
+    text = String(text || '').slice(0, 3000);
 
-    // 이미 같은 key로 job이 있으면 재사용
-    const existId = jobsByKey.get(key);
-    if (existId) {
-      const exist = jobsById.get(existId);
-      if (exist && (now() - exist.created_at) <= JOB_TTL_MS) {
-        return res.json({
-          ok: true,
-          job_id: existId,
-          state: exist.state,
-          // done이면 바로 결과도 같이 줌(왕복 줄이기)
-          ...(exist.state === 'done' ? { result: exist.result?.result ?? exist.result } : {}),
-        });
-      }
+    const dedupeKey = makeDedupeKey({ user_id, entry_id, text_hash });
+
+    // ✅ 같은 key면 같은 job 재사용
+    const existingJobId = CLASSIFY_JOB_KEYS.get(dedupeKey);
+    if (existingJobId && CLASSIFY_JOBS.has(existingJobId)) {
+      return res.json({ ok: true, job_id: existingJobId, reused: true });
     }
 
-    // 새 job 생성
     const job_id = makeJobId();
-    const job = {
-      job_id,
-      key,
-      payload,
-      state: 'queued',
-      created_at: now(),
-      updated_at: now(),
-      result: null,
-      error: null,
-    };
+    CLASSIFY_JOBS.set(job_id, { status: 'running', result: null, error: null, createdAt: Date.now() });
+    CLASSIFY_JOB_KEYS.set(dedupeKey, job_id);
 
-    jobsById.set(job_id, job);
-    jobsByKey.set(key, job_id);
+    // ✅ 비동기로 실행 (클라이언트 연결 끊겨도 서버는 계속)
+    runClassifyJob(job_id, text);
 
-    // 비동기 실행(요청 연결과 분리)
-    setTimeout(() => runClassifyJob(job_id), 0);
-
-    res.json({ ok: true, job_id, state: 'queued' });
+    res.json({ ok: true, job_id });
   } catch (e) {
     console.error('[/classifyjob/start] error', e);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-// result (GET)
+// ======================================================
+// (NEW) /classifyjob/result?job_id=...
+// - running이면 202 + {pending:true}
+// ======================================================
 app.get('/classifyjob/result', async (req, res) => {
   try {
     const job_id = String(req.query.job_id || '');
     if (!job_id) return res.status(400).json({ ok: false, error: 'missing_job_id' });
 
-    const job = jobsById.get(job_id);
+    const job = CLASSIFY_JOBS.get(job_id);
     if (!job) return res.status(404).json({ ok: false, error: 'job_not_found' });
 
-    if (job.state === 'done') {
-      return res.json({
-        ok: true,
-        job_id,
-        state: 'done',
-        result: job.result?.result ?? job.result,
-      });
+    if (job.status === 'running') {
+      return res.status(202).json({ ok: true, pending: true });
     }
-    if (job.state === 'error') {
-      return res.json({
-        ok: false,
-        job_id,
-        state: 'error',
-        error: job.error || 'job_error',
-      });
+    if (job.status === 'error') {
+      return res.status(500).json({ ok: false, error: job.error || 'job_error' });
     }
-    return res.json({ ok: true, job_id, state: job.state }); // queued/running
+    return res.json({ ok: true, result: job.result });
   } catch (e) {
     console.error('[/classifyjob/result] error', e);
     res.status(500).json({ ok: false, error: e.message });
