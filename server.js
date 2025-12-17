@@ -470,6 +470,11 @@ app.post('/practice', async (req, res) => {
 // ======================================================
 app.get('/', (_, res) => res.send('ON backend is running (Gemini Leda TTS + Jobs)'));
 
+// ✅ 콜드스타트 예열용 (프론트 HEAD에서 GET /ping 쏘는 용도)
+app.get('/ping', (req, res) => {
+  res.status(200).send('ok');
+});
+
 // ======================================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
